@@ -1,0 +1,22 @@
+DESCRIPTION 'C Interface to FTGL'
+
+VERSION 0.1
+
+EXPORTS
+	fgcSetFaceSize
+	fgcCharTexture
+	fgcStringX
+	fgcAscender
+	fgcDescender
+	fgcStringAdvance
+	fgcRender
+	fgcFree
+	fgcBitmapMake
+	fgcPixmapMake
+	fgcTextureMake
+	fgcPolygonMake
+	fgcOutlineMake
+	fgcExtrudedMake
+	fgcSetFaceDepth
+	fgcBuildGlyphs
+	

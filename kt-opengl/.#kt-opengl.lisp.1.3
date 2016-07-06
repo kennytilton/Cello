@@ -1,0 +1,120 @@
+;;________________________________________________________
+;;
+;;;
+;;; Copyright © 2004 by Kenneth William Tilton.
+;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+(pushnew :kt-opengl *features*)
+
+(defpackage #:kt-opengl
+  (:nicknames #:ogl)
+  (:use #:common-lisp #:cffi #:ffx)
+  (:export #:*ogl-listing-p*
+    #:glut-get-window 
+    #:glut-set-window 
+    #:glut-post-redisplay
+    #:with-matrix
+    #:with-attrib
+    #:with-client-attrib
+    #:with-gl-begun 
+    #:gl-pushm 
+    #:gl-popm
+    #:glut-callback-set 
+    #:kt-opengl-init 
+    #:closed-stream-p 
+    #:*selecting*
+    #:kt-opengl-reset
+    #:kt-opengl-set-home-dir
+    #:kt-opengl-get-home-dir
+    #:cl-glut-set-home-dir
+    #:cl-glut-get-home-dir
+    #:kt-opengl-set-gl-dll-filename
+    #:kt-opengl-get-gl-dll-filename
+    #:kt-opengl-set-glu-dll-filename
+    #:kt-opengl-get-glu-dll-filename
+    #:cl-glut-set-dll-filename
+    #:cl-glut-get-dll-filename
+    #:ogl-texture
+    #:ncalc-normalf #:ncalc-normalfv #:ogl-get-int #:ogl-get-boolean 
+    #:v3f #:make-v3f #:v3f-x #:v3f-y #:v3f-z
+    #:with-gl-param #:xlin #:xlout
+    #:farther #:nearer
+    #:ogl-texture-delete #:ogl-texture-gen #:ogl-tex-gen-setup
+    #:ogl-bounds #:ogl-scissor-box #:ogl-raster-pos-get
+    #:ogl-pen-move #:with-bitmap-shifted
+    #:texture-name #:ogl-list-cache #:ogl-lists-delete
+    #:eltgli #:ogl-tex-activate #:gl-name #:glec
+
+    #:gl-get-integers
+    #:gl-get-floats
+    #:gl-get-doubles
+    #:with-gl-parami
+    #:with-gl-paramf
+    #:with-gl-paramd
+    #:with-gl-integers
+    #:with-gl-floats
+    #:with-gl-doubles
+    #:with-display-list
+    ))
+
+(in-package :kt-opengl)
+
+(defvar *selecting*)
+
+
+(defparameter *gl-dynamic-lib*
+    (make-pathname
+    ;;#+lispworks :host #-lispworks :device "c"
+      :directory '(:absolute "windows" "system32")
+      :name "opengl32"
+      :type "dll"))
+
+(defparameter *glu-dynamic-lib*
+    (make-pathname
+    ;;#+lispworks :host #-lispworks :device "c"
+      :directory '(:absolute "windows" "system32")
+      :name "glu32"
+      :type "dll"))
+
+(defparameter *glut-dynamic-lib* :unconfigured)
+
+(defparameter *opengl-dll* nil)
+
+(defun gl-boolean-test (value)
+  #+allegro (not (eql value #\null))
+  #-allegro (not (zerop value)))
+
+(defun dump-lists (min max)
+  (loop with start
+        and end
+        for lx from min to max
+        when (let ((is (gl-is-list lx)))
+               (when (gl-boolean-test is) 
+                 (print (list "dl test" lx is (char-code is))))
+               (gl-boolean-test is))
+        do (if start
+               (if end
+                   (if (eql lx (1+ end))
+                       (setf end lx)
+                     (print `(gl ,start to ,end)))
+                 (if (eql lx (1+ start))
+                     (setf end lx)
+                   (print `(gl ,start))))
+             (setf start lx))))

@@ -1,0 +1,403 @@
+;; -*- mode: Lisp; Syntax: Common-Lisp; Package: cello; -*-
+;;;
+;;; Copyright © 2004 by Kenneth William Tilton.
+;;;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+;;; $Header: /project/cello/cvsroot/cello/cl-ftgl/cl-ftgl.lisp,v 1.9 2006/08/23 20:11:18 fgoenninger Exp $
+
+(eval-when (:compile-toplevel :load-toplevel)
+  (pushnew :cl-ftgl *features*))
+
+(defpackage #:cl-ftgl
+  (:nicknames #:ftgl)
+  (:use #:common-lisp #:cffi #:kt-opengl)
+  (:export #:ftgl 
+    #:ftgl-pixmap 
+    #:ftgl-texture 
+    #:ftgl-bitmap
+    #:ftgl-polygon 
+    #:ftgl-extruded 
+    #:ftgl-outline
+    #:ftgl-string-length 
+    #:ftgl-char-width
+    #:ftgl-get-ascender 
+    #:ftgl-get-descender
+    #:ftgl-height
+    #:ftgl-make 
+    #:cl-ftgl-init 
+    #:cl-ftgl-reset 
+    #:xftgl 
+    #:ftgl-render
+    #:ftgl-font-ensure
+    #:*ftgl-dynamic-lib-path*
+    #:*font-directory-path*
+    #:*gui-style-default-face*
+    #:*gui-style-button-face*))
+
+(in-package :cl-ftgl)
+
+(define-foreign-library FTGL
+      (:darwin (:or "/opt/common-lisp/cello/cl-ftgl/ftgl-int/libFTGLint.dylib"))
+      (:windows (:or "/0dev/user/dynlib/ftgl_dynamic_MTD_d.dll")))
+
+(use-foreign-library FTGL)
+
+(defparameter *gui-style-default-face* 'sylfaen)
+(defparameter *gui-style-button-face* 'sylfaen)
+(defparameter *ftgl-loaded-p* nil)
+(defparameter *ftgl-fonts-loaded* nil)
+(defparameter *ftgl-ogl* nil)
+
+;; ----------------------------------------------------------------------------
+;; FOREIGN FUNCTION INTERFACE
+;; ----------------------------------------------------------------------------
+
+(defcfun ("fgcSetFaceSize" fgc-set-face-size) :unsigned-char
+  (f :pointer)(size :int)(res :int))
+
+(defcfun ("fgcCharTexture" fgc-char-texture) :int
+  (f :pointer)(charCode :int))
+
+(defcfun ("fgcAscender" fgc-ascender) :float
+  (font :pointer))
+
+(defcfun ("fgcDescender" fgc-descender) :float
+  (font :pointer))
+
+(defcfun ("fgcStringAdvance" fgc-string-advance) :float
+  (font :pointer) (text :string))
+
+(defcfun ("fgcStringX" fgc-string-x) :float
+  (font :pointer)(text :string))
+
+(defcfun ("fgcRender" fgc-render) :void
+  (font :pointer)(text :string))
+
+(defcfun ("fgcBuildGlyphs" fgc-build-glyphs) :void
+  (font :pointer))
+
+(defcfun ("fgcFree" fgc-free) :void
+  (font :pointer))
+
+(defcfun ("fgcBitmapMake" fgc-bitmap-make) :pointer
+  (typeface :string))
+(defcfun ("fgcPixmapMake" fgc-pixmap-make) :pointer
+  (typeface :string))
+(defcfun ("fgcTextureMake" fgc-texture-make) :pointer
+  (typeface :string))
+(defcfun ("fgcPolygonMake" fgc-polygon-make) :pointer
+  (typeface :string))
+(defcfun ("fgcOutlineMake" fgc-outline-make) :pointer
+  (typeface :string))
+(defcfun ("fgcExtrudedMake" fgc-extruded-make) :pointer
+  (typeface :string))
+
+(defcfun ("fgcSetFaceDepth" fgcSetFaceDepth) :unsigned-char
+  (font :pointer)(depth :float))
+
+(defun fgc-set-face-depth (font depth)
+  (fgcSetFaceDepth font (coerce depth 'float)))
+
+(defparameter *font-directory-path*
+  (make-pathname 
+    :directory
+   #+(or win32 mswindows) 
+   '(:absolute "windows" "fonts")
+   #+linux 
+   '(:absolute "usr" "share" "fonts" "truetype")
+   #+macosx
+   '(:absolute "Library" "Fonts")
+   ))
+
+;; ----------------------------------------------------------------------------
+;; FUNCTIONS/METHODS
+;; ----------------------------------------------------------------------------
+
+(defun cl-ftgl-reset ()
+#-mcl  
+  (setq *ftgl-loaded-p* nil) 
+  (cells::trc "nailing fonts loaded!!!!!!!!!!!!!")
+  (setq *ftgl-fonts-loaded* nil))
+
+(defmacro dbgftgl (tag &body body)
+  (declare (ignorable tag))
+  `(progn
+     #+nahhh (unless (boundp '*gl-begun*)
+       (assert (zerop (glgeterror))))
+     #+nahhh (loop for (key . fonts) in (mathx::mp-fonts mathx::*font-node*)
+           when (eq key 'mathx::mathvar)
+           do (loop for font across fonts
+                    when (or (eql 12 (ftgl-size font))(ftgl-ifont font))
+                    do (cells::trc nil "dbgftgl sees ifont" ,tag (ftgl-face font)(ftgl-size font)(ftgl-ifont font))))
+     (progn ;; cells:wtrc (0 100 "dbgftgl" ,tag)
+       (ftgl-assert-opengl-context)
+       (unless (boundp '*gl-begun*) (glec :dbgftgl-entry))
+       (prog1
+           (progn ,@body)
+         (unless (boundp '*gl-begun*)
+           (progn
+             (glec :dbgftgl-post-body)))))))
+
+
+#+test
+(progn
+  (cl-ftgl-init)
+  (let ((sylfaen (ftgl-font-ensure :texture "Sylfaen" 24 96)))
+    (print (list "sylfaen ascender" (ftgl-get-ascender sylfaen)))
+    (print (list "sylfaen descender" (ftgl-get-descender sylfaen)))
+    (print (list "sylfaen hello world length" (ftgl-string-length sylfaen "Hello world")))
+    (print (list "sylfaen disp font" (ftgl-get-display-font sylfaen)))
+  ))
+
+(defun cl-ftgl-init ()
+  (unless *ftgl-loaded-p* 
+    (assert (setq *ftgl-loaded-p* (use-foreign-library ftgl)))))
+
+(defun ftgl-font-ensure (type face size target-res &optional (depth 0))
+  (let* ((fspec (list type face size target-res depth))
+         (match (cdr (assoc fspec *ftgl-fonts-loaded* :test 'equal))))
+    #+shh (if match
+        (cells:trc "ftgl-font-ensure finds match" fspec (ftgl-ifont match))
+      (cells:trc "ftgl-font-ensure NO match"  fspec ))
+    (or match
+      (let ((f (apply 'ftgl-make fspec)))
+        (push (cons fspec f) *ftgl-fonts-loaded*)
+        (cells:trc nil "ftgl-font-ensure new font spec ifont" fspec (ftgl-ifont f))
+        f))))
+
+(defun ftgl-make (type face size target-res &optional (depth 0))
+  ;; (print (list "ftgl-make entry" type face size))
+  (let ((dbg (gensym (format nil "~a-~a" face size))))
+    (cells:trc nil "ftgl-make actually makes new font structure for" dbg type face size :fonts-loaded-ct (length *ftgl-fonts-loaded*))
+    (funcall (ecase type
+               (:bitmap 'make-ftgl-bitmap)
+               (:pixmap 'make-ftgl-pixmap)
+               (:texture 'make-ftgl-texture)
+               (:outline 'make-ftgl-outline)
+               (:polygon 'make-ftgl-polygon)
+               (:extruded 'make-ftgl-extruded))
+      :dbg dbg
+      :face face
+      :size (floor size) 
+      :target-res target-res
+      :depth depth)))
+  
+  
+  ;; --------- ftgl structure -----------------
+  
+(defstruct ftgl
+  dbg
+  face size target-res depth
+  descender ascender 
+  (widths (make-array 256 :initial-element nil))
+  ft-metrics
+  (ifont nil))
+
+(defun dbgfont (font calltag)
+  (declare (ignore font calltag))
+;;;  (cells::trc "dbgfont" calltag (ftgl-dbg font) (ftgl-face font)(ftgl-size font)(ftgl-ifont font))
+;;;  (unless (find font mathx::*font-node-all*)
+;;;    (cells::trc "dbgfont unknown!!!!! " calltag )
+;;;    (dolist (f mathx::*font-node-all*)
+;;;      (cells::trc "known" (ftgl-dbg f)(ftgl-face f)(ftgl-size f)))
+;;;    (break "odd font"))
+  )
+
+(defun ftgl-assert-opengl-context ()
+  ;; use when debugging FTGL being hit before opengl context estanblished 
+  (assert *ftgl-ogl*)
+  )
+
+(defun ftgl-char-width (f c)
+  (assert (zerop (glgeterror)))
+  (dbgftgl :ftgl-char-width
+   (or (aref (ftgl-widths f) (char-code c))
+     (setf (aref (ftgl-widths f) (char-code c))
+       (ftgl-string-length f (string c))))))
+
+(defstruct (ftgl-disp (:include ftgl))
+  ready-p)
+
+(defstruct (ftgl-pixmap (:include ftgl-disp)))
+(defstruct (ftgl-texture (:include ftgl-disp)))
+(defstruct (ftgl-bitmap (:include ftgl)))
+(defstruct (ftgl-polygon (:include ftgl)))
+(defstruct (ftgl-extruded (:include ftgl-disp)))
+(defstruct (ftgl-outline (:include ftgl)))
+
+(defmethod ftgl-ready (font)
+  (declare (ignorable font))
+  t)
+
+(defmethod (setf ftgl-ready) (new-value (font ftgl-disp))
+  (setf (ftgl-disp-ready-p font) new-value))
+
+(defmethod (setf ftgl-ready) (new-value font)
+  (declare (ignore new-value font)))
+
+(defmethod ftgl-ready ((font ftgl-disp))
+  ;(print (list "A cheerful HELLO from ftgl-ready: " font))
+  (ftgl-disp-ready-p font))
+
+
+#+allegro
+(defun xftgl ()
+  (dolist (dll (ff:list-all-foreign-libraries))
+    (when (search "ftgl" (pathname-name dll))
+      (print `(unloading foreign library ,dll))
+      (ff:unload-foreign-library dll)
+      (cl-ftgl-reset))))
+
+#+doit
+(xftgl)
+
+(defun ftgl-get-ascender (font)
+  (cells:trc nil "ftgl-get-ascender" (ftgl-ifont font))
+  (dbgftgl :ftgl-get-ascender
+   (or (ftgl-ascender font)
+     (setf (ftgl-ascender font)
+       (fgc-ascender (ftgl-get-metrics-font font))))))
+
+(defun ftgl-get-descender (font)
+  (cells:trc nil "ftgl-get-descender" (ftgl-ifont font))
+  (dbgftgl :ftgl-get-descender
+   (or (ftgl-descender font)
+     (setf (ftgl-descender font)
+       (fgc-descender (ftgl-get-metrics-font font))))))
+
+(defun ftgl-height (f)
+  (cells:trc nil "ftgl-height" (ftgl-ifont f))
+  (dbgftgl :ftgl-height
+   (- (ftgl-get-ascender f)
+     (ftgl-get-descender f))))
+
+(defun ftgl-get-display-font (font)
+  (cells:trc nil "ftgl-get-display-font" (ftgl-ifont font))
+  (dbgftgl :ftgl-get-display-font
+   (let ((cf (ftgl-get-metrics-font font)))
+     (assert cf)
+     ; (print (list "FTGL-GET-DISPLAY-FONT sees" (ftgl-disp-ready-p font)))
+     ;; (print (list "FTGL-GET-DISPLAY-FONT sees" (ftgl-ready font)))
+     
+     (Unless (ftgl-ready font)
+       ; (when *ogl-listing-p*
+       ;   (cells::c-break "bad time #1 for sizing? ~a ~a" *ogl-listing-p* font))
+       (setf (ftgl-ready font) t)
+       (typecase font
+         (ftgl-extruded
+          #+nyet (let ((*ogl-listing-p* t))
+                   (cells:trc nil "ftgl-get-display-font> building glyphs for" font)
+                   
+                   (fgc-build-glyphs cf)
+                   (cells:trc nil "ftgl-get-display-font> glyphs built OK for" font)))
+         (ftgl-texture
+          #+no (fgc-set-face-size cf (ftgl-size font) (ftgl-target-res font)))
+         (ftgl-pixmap
+          #+no (fgc-set-face-size cf (ftgl-size font) (ftgl-target-res font)))))
+     (glec :ftgl-get-display-font)
+     cf)))
+
+(defun ftgl-get-metrics-font (font)
+  (cells:trc nil "ftgl-get-metrics-font entry" (ftgl-ifont font)(ftgl-face font)(ftgl-size font))
+  (dbgftgl :ftgl-get-metrics-font
+    (cells:EKO (nil "ftgl-get-metrics-font" (ftgl-ifont font)(ftgl-face font)(ftgl-size font))
+       (or (ftgl-ifont font)
+         (setf (ftgl-ifont font) (ftgl-font-make font))))
+    ;; (print (list "ftgl-get-metrics-font: exit" font)) ; frgo, ADDED: debug...
+    ))
+
+(defun ftgl-font-make (font)
+  ;(print (list "ftgl-font-make: entry" (ftgl-face font)(ftgl-size font)(ftgl-ifont font)))
+  (let ((path (merge-pathnames
+               (make-pathname :name (string (ftgl-face font)) :type "ttf")
+               *font-directory-path*)))
+    (if (probe-file path)
+        (let* ((fpath (namestring path))
+               (f (fgc-font-make font fpath)))
+          (if f
+              (progn
+                ;;(ogl::dump-lists 1 10000)
+                (fgc-set-face-size f (ftgl-size font) (ftgl-target-res font))
+                (cells:eko (nil "ftgl-font-make gets C font pointer" (ftgl-face font)(ftgl-size font))
+                  f))
+            (error "cannot load ~a font ~a" (type-of font) fpath)))
+      (error "Font not found: ~a" path))))
+
+(defmethod ftgl-render (font s)
+  (assert font)
+  (assert (stringp s))
+  (dbgfont font :ftgl-render)
+  (dbgftgl :ftgl-render
+   (when font
+     (let ((df (ftgl-get-display-font font)))
+       (ukt:trc nil "ftgl-render ing" df s (ftgl-face font) (ftgl-size font))
+       (if df
+           (fgc-render df s)
+         (break "whoa, no display font for ~a" font))))))
+
+(defmethod ftgl-render :before ((font ftgl-texture) s)
+  (declare (ignorable s))
+  (dbgfont font :ftgl-render-before)
+  
+  (dbgftgl :ftgl-render
+    (gl-enable gl_texture_2d)
+    (gl-enable gl_blend)
+    (gl-disable gl_lighting)))
+    
+(defmethod fgc-font-make :before (font fpath)
+  (declare (ignore font fpath))
+  (cl-ftgl-init))
+
+(defmethod fgc-font-make ((font ftgl-pixmap) fpath)
+  (fgc-pixmap-make fpath))
+  
+(defmethod fgc-font-make ((font ftgl-bitmap) fpath)
+  (fgc-bitmap-make fpath))
+  
+(defmethod fgc-font-make ((font ftgl-texture) fpath)
+  (fgc-texture-make fpath))
+
+(defmethod fgc-font-make ((font ftgl-extruded) fpath)
+  (let ((fgc (fgc-extruded-make fpath)))
+    (fgc-set-face-depth fgc (ftgl-depth font))
+    fgc))
+
+(defmethod fgc-font-make ((font ftgl-outline) fpath)
+  (fgc-outline-make fpath))
+
+(defmethod fgc-font-make ((font ftgl-polygon) fpath)
+  (fgc-polygon-make fpath))
+
+(defun ftgl-string-length (font cs)
+  ;;(cells:trc "ftgl-string-length" (ftgl-get-metrics-font font) cs)
+  (assert (zerop (glgeterror)))
+  (dbgftgl :ftgl-string-length
+    (assert (zerop (glgeterror)))
+    (let ((mf (ftgl-get-metrics-font font)))
+      (assert (zerop (glgeterror)))
+      (prog1
+          (fgc-string-advance mf cs)
+        (assert (zerop (glgeterror)))))))
+
+(defmethod font-bearing-x (font &optional text)
+  (declare (ignorable font text))
+  0)
+
+

@@ -1,0 +1,174 @@
+;; -*- mode: Lisp; Syntax: Common-Lisp; Package: kt-opengl; -*-
+;;________________________________________________________
+;;
+;;;
+;;; Copyright © 2004 by Kenneth William Tilton.
+;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+(in-package :kt-opengl)
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (export '(with-gl-translation)))
+
+(defvar *stack-depth*
+  (fgn-alloc :int 1 :ignore))
+
+(defmacro with-matrix ((&optional load-identity-p) &body body)
+  `(call-with-matrix ,load-identity-p (lambda () ,@body) ',body))
+
+(defun call-with-matrix (load-identity-p matrix-fn matrix-code)
+  (declare (ignorable matrix-code))
+  (gl-push-matrix)  
+  (unwind-protect
+      (progn
+        (when load-identity-p
+          (gl-load-identity))
+        (funcall matrix-fn))
+    (gl-pop-matrix)))
+
+#+debugversion
+(defun call-with-matrix (load-identity-p matrix-fn matrix-code)
+  (let* ((mm-pushed (get-matrix-mode))
+        (sd-pushed (get-stack-depth mm-pushed)))
+    (progn ;; cells:wtrc (0 100 "with-matrix starts with mode" (matrix-mode-symbol mm-pushed) :depth sd-pushed)
+      (gl-push-matrix)
+      (unwind-protect
+          (progn
+            (when load-identity-p
+              (gl-load-identity))
+            (prog1
+                (funcall matrix-fn)
+              (glec :with-matrix-body)))
+        (assert (eql mm-pushed (get-matrix-mode))()
+          "matrix-mode left as ~a  instead of ~a by form ~a"
+          (ogl::get-matrix-mode) mm-pushed  matrix-code)
+        (cells:trc nil "poppping matrix!!!!!" (matrix-mode-symbol (get-matrix-mode)) :from-depth (get-stack-depth (get-matrix-mode)))
+        (gl-pop-matrix)
+        (assert (eql sd-pushed (get-stack-depth mm-pushed))()
+          "matrix depth deviated ~d during ~a"
+          (- sd-pushed (get-stack-depth mm-pushed))
+          matrix-code)
+        (glec :exit-with-stack)))))
+
+(defmacro with-attrib ((&rest attribs) &body body)
+  `(call-with-attrib
+    ,(apply '+ (mapcar 'symbol-value attribs))
+    (lambda () ,@body)))
+
+(defun call-with-attrib (attrib-mask attrib-fn)
+  (gl-push-attrib attrib-mask)
+  (glec :with-attrib-push)
+  (unwind-protect
+      (prog1
+          (funcall attrib-fn)
+        (glec :with-attrib))
+    (gl-pop-attrib)))
+
+(defmacro with-client-attrib ((&rest attribs) &body body)
+  `(call-with-client-attrib
+    ,(apply '+ (mapcar 'symbol-value attribs))
+    (lambda () ,@body)))
+
+(defun call-with-client-attrib (attrib-mask attrib-fn)
+  (gl-push-client-attrib attrib-mask)
+  (glec :with-client-attrib-push)
+  (unwind-protect
+      (prog1
+          (funcall attrib-fn)
+        (glec :with-client-attrib))
+    (gl-pop-client-attrib)
+    (glec :with-client-attrib-pop)))
+
+(defvar *gl-begun*)
+(defvar *gl-stop*)
+
+(defmacro with-gl-begun ((what) &body body)
+  `(call-with-gl-begun ,what (lambda () ,@body)))
+
+(defun call-with-gl-begun (what begun-fn)
+  (when (boundp '*gl-begun*)
+    (setf *gl-stop* t)
+    (break ":nestedbegin"))
+  (progn
+    (glec :with-gl-begun-BEFORE)
+    (let ((*gl-begun* t))
+      (gl-begin what)
+      (funcall begun-fn)
+      (gl-end))
+    (glec :with-gl-begun-exit)))
+
+(defmacro with-gensyms ((&rest syms) &body body)
+  `(let ,(loop for sym in syms
+                       collecting `(,sym (gensym)))
+     ,@body))
+
+(defmacro with-gl-translation ((dxf dyf &optional (dzf 0)) &body body)
+  (with-gensyms (dx dy dz)
+    `(let ((,dx ,dxf)(,dy ,dyf)(,dz ,dzf))
+       (gl-translatef ,dx ,dy ,dz)
+       (prog1
+           ,@body
+         (gl-translatef (- ,dx)(- ,dy)(- ,dz))))))
+
+(defun kt-opengl-init ()
+  (declare (ignorable load-oglfont-p))
+  (unless *opengl-dll*
+    #-mcl
+    (progn
+      (print "loading open GL/GLU")
+      (cffi-uffi-compat:load-foreign-library
+       *gl-dynamic-lib*
+       :module "open-gl"))
+    #+mcl
+      (format t "~&We're on Darwin, so we do not load the OpenGL dynlib explicitely~%.")
+    #-mcl
+    (setf *opengl-dll* (cffi-uffi-compat:load-foreign-library *glu-dynamic-lib*
+                         :module "gl-util"))
+    #+mcl
+    (setf *opengl-dll* t)
+  ))
+
+(eval-when (load eval)
+  (kt-opengl-init))
+
+(defun kt-opengl-reset ()
+  (loop for ec = (glgeterror)
+        for n below 10
+        when (zerop ec) do (cells::trc "kt-opengl-reset sees zero error code")
+        (loop-finish)
+        do (cells::trc "kt-opengl-init sees error" ec)))
+
+(defun glec (&optional (id :anon) announce-success)
+  (if (and (boundp '*gl-begun*) *gl-begun*)
+      (progn (cells:trc nil "not checking error inside gl.begin" id))
+    (let ((e (glgeterror)))
+      (if (zerop e)
+          (when announce-success
+            (print `(OpenGL cool ,id)))
+        (if t ;; (null (find id '(glutInitDisplayMode glutInitWindowSize)))
+            (if (boundp '*gl-stop*)
+                (cells:trc "error but *gl-stop* already bound" e id)
+              (progn
+                (setf *gl-stop* t)
+                (format t "~&~%OGL error ~a at ID ~a" e id)
+                (break "OGL error ~a at ID ~a" e id)
+                ))
+          #+sigh (print `("OGL error ~a at ID ~a" ,e ,id)))))))
+

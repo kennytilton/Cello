@@ -1,0 +1,136 @@
+;; -*- mode: Lisp; Syntax: Common-Lisp; Package: cl-magick; -*-
+;;;
+;;; Copyright © 2004 by Kenneth William Tilton.
+;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+(in-package :cl-magick)
+
+(defclass wand-image ()
+  ((direction  :initarg :direction  :initform :input :accessor direction)
+   (file-path$ :initarg :file-path$ :initform nil    :accessor file-path$)
+   (mgk-wand   :initarg :mgk-wand   :initform nil    :accessor mgk-wand)
+   (image-size :initarg :image-size :initform nil    :accessor image-size)
+   (tile-p     :initarg :tile-p     :initform t      :accessor tile-p)))
+
+(defmethod initialize-instance :after ((self wand-image) &key)
+  (ecase (direction self)
+    (:output (progn
+               (assert (pixels self))
+               (assert (image-size self))
+               (setf (mgk-wand self) (new-magick-wand))
+               (destructuring-bind (columns . rows) (image-size self)
+                 (assert (zerop (magick-set-image-pixels
+                                 (setf (mgk-wand self) (new-magick-wand))
+                                 0 0 columns rows "CRGB" 3 (pixels self)))))
+               (magick-set-image-type (mgk-wand self) 3)
+               ))
+    (:input
+     (assert (probe-file (file-path$ self)) ()
+       "Image file ~a not found initializing wand" (file-path$ self))
+     (assert (not (mgk-wand self))) ;; make sure not leaking
+     (setf (mgk-wand self) (path-to-wand (file-path$ self)))
+     ;;(mgk-wand-dump (mgk-wand self) (file-path$ self))
+     (when (and (mgk-wand self) (not (image-size self)))
+       (setf (image-size self)
+         (cons (magick-get-image-width (mgk-wand self))
+           (magick-get-image-height (mgk-wand self))))
+       (when (zerop (* (car (image-size self)) (cdr (image-size self))))
+           (setf (image-size self) (cons 64 64)))))))
+
+(defmethod wand-release ((wand wand-image))
+  (when (mgk-wand wand)
+    ;(print (list "destroying magick wand" wand))
+    ;(describe wand)
+    (destroy-magick-wand (mgk-wand wand))
+    ))
+
+(defun path-to-wand (path)
+  (let ((wand (new-magick-wand))
+        (p (namestring path)))
+    (assert (probe-file p))
+    (let ((stat (magick-read-image wand p)))
+      (if (zerop stat)
+          (format t "~&magick-read jpeg failed on ~a" p)
+        #+shhh (format t "~&magick-read-OK ~a" p)))
+    wand))
+
+(defparameter *mgk-columns*
+  (fgn-alloc :unsigned-long 1 :ignore))
+
+(defparameter *mgk-rows*
+  (fgn-alloc :unsigned-long 1 :ignore))
+
+(defun wand-image-size (wand)
+  (magick-get-size wand
+		   *mgk-columns*
+		   *mgk-rows*)
+  (cons (ff-elt *mgk-columns* :unsigned-long 0)
+        (ff-elt *mgk-rows*    :unsigned-long 0)))
+
+(defun wand-get-image-pixels (wand 
+                                &optional (first-col 0) (first-row 0)
+                                (last-col (magick-get-image-width wand))
+                                (last-row (magick-get-image-height wand)))
+  (if (zerop (* last-col last-row))
+      (let* ((columns 64)(rows 64)
+             (pixels (fgn-alloc :unsigned-char (* 3 columns rows) :wand-image)))
+        (print "wand-get-image-pixels > wand has zero pixels; did the load fail?")
+        (dotimes (pn (* columns rows))
+          (setf (elti pixels pn) -1))
+        (values pixels columns rows))
+        
+    (let* ((columns (- last-col first-col))
+           (rows (- last-row first-row))
+           (pixels (fgn-alloc :unsigned-char (* 3 columns rows) :wand-image)))
+      (assert (not (null-pointer-p pixels))() "wand-get-image-pixels > fgn-alloc of ~a bytes failed" (* 3 columns rows))
+      ;;(print (list "wand-get-image-pixels got" wand (* 3 columns rows) pixels)) ;; frgo: debug ...
+      (cells:trc nil "image format" wand (magick-get-image-format wand)) ;; frgo:debug...
+      ;
+      ; these next two are quite slow thx to FFI I guess
+      ;
+      #+pretty! ;; random noise texture and pixmap
+      (dotimes (off (* 3 columns rows))
+        (setf (eltuc pixels off) (random 256)))
+
+      #+zerosowecanseewhatreallygetsread
+      (dotimes (off (* 3 columns rows))
+        (setf (eltuc pixels off) 0))
+
+      (magick-get-image-pixels wand first-col first-row columns rows "RGB" 0 pixels )
+     ;;(print `(writeimage ,(magick-write-image wand "/tmp/wand-image-test.jpg")))
+      #+shhh (progn
+        ;
+        ; look at a few pixels
+        ;
+        (print (list "a few pixels from" wand))
+        (block sweet-16
+          (loop for row below rows do
+                (loop with bytes
+                    for bytecol below (* 3 columns)
+                    for offset = (+ (* row columns 3) bytecol)
+                    for char = (eltuc pixels offset)
+                    until (> (length bytes) 15)
+                    unless (zerop char)
+                    do (pushnew char bytes)
+                    finally (format t "~&sixteen bytes ~{~a ~}" bytes)
+                      (return-from sweet-16)))))
+            
+      (values pixels columns rows))))
+

@@ -1,0 +1,17 @@
+Thanks and congrats to David Steuber for mandelbrot3.gif, which appears in
+the same directory as this file. The fractal image was produced as part of
+David's early explorations of Lisp, and he has graciously given his permission
+for its inclusion as one of the sample image files for Cello.
+
+You can find it in the demos in the scroller demo and as one of the textures 
+you can apply to the shapes in the light-panel demo.
+
+David asked that I also let folks know he is making it generally available (with
+attribution to David) under the Creative Commons copyright:
+
+"This work is licensed under the Creative Commons Attribution License. 
+To view a copy of this license, visit http://creativecommons.org/licenses/by/1.0/ 
+or send a letter to Creative Commons, 559 Nathan Abbott Way, Stanford, California 94305, USA."
+
+I think the creativecommons.html I grabbed from the Web and is in this same directory 
+should be readable as well.

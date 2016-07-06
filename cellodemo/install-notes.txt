@@ -1,0 +1,137 @@
+PortaCello4 (this release) was meant to be a maintenance release. Instead, here is what is new:
+
+- destudlification: I wrote a program to assist in a semi-automatic conversion of all studlyCap occurrences to studly-cap. But it was also semi-manual, so do not fall over dead if something snuck through. It at least seems as if I did not introduce any bugs doing this.
+
+- OpenAL: Play back wav files in 3D. Not sure if other formats are accessible. The bindings are in cl-openal, and Cello has a very rough framework to make it easier to easily associate sounds with the action. But that is really awful, just enough to get the app to make sound. Sometimes. When it works.
+
+- zoom zoom zoom: Cello now makes maximum use of OpenGL display list optimizations, and I am seeing roughly 400% higher frame rates as a result. Every node inthe visual framework gets its own display list. These get refreshed bottom up when any element needs to change how it gets drawn, so a parent, when it comes time to redraw itself, can simply call the display list of its children. Later on, if a child changes, that is the only display list which needs to be redefined to OpenGL; when the parent renders, the new definition of the child display list gets picked up. In the end, the most complex window can be redrawn with nothing more than one gl-call-list call, on the window's display list.
+
+- FTGL problems: unfortunately, the display list stuff has created some problems. I would fix them but I have to drop Cello for a couple of weeks and I did not want to hold up the release. Various issues:
+
+--- Select the shape called "Cello" in the light panel demo, which shows the word "Cello" in extruded type. Ahem. It actually shows "ello".
+
+--- Clicking on different shapes in the light panel demo, individual letters start disappearing from words in that list and the "Backdrops" list!!
+
+--- Select the ft-jpg test. It runs at like one frame per second. resize the window one pixel and it jumps to 40-50 fps. Go figure.
+
+--- Select the ftgl-test demo. Better yet, don't. It will take forever to open, and then be almost completely unresponsive. resize the window and frame rates climb at least to 8-10fps.
+
+--- resizing works because I force all display lists to be regenerated on a resize. This makes resizing a window pretty slow, since it causes a ton of work to be done every frame as the mouse is dragged around. So why resize? That does not change the way most things need to be drawn. Answer: OpenGL clipping does not play well with display lists, because unlike the rest of OpenGL clipping gets recorded in global coordinates. It's a long story. I have a fix in mind, tho. RSN. 
+
+;-----------------------------------------------------------------
+
+Portacello3 was a first, rough stab at a livable directory structure for Cello.
+But it is rough, and will not get less so until a few people try to install
+and report back to the cello-devel list with problems and/or suggestions. That said, I have had good luck relocating the project on my own system and rebuilding with no more than a change to "cello-devel-root* in configure.lisp.
+
+The objective I have is to separate configuration from the source tree, 
+so you could tweak them once to fit your environment and then forget them even
+after grabbing a new distro. But I also wanted to keep application code inside 
+the source tree to simplify future revisions.
+
+It turned out a little weird: a root configuration.lisp file 
+sets the *cello-config-directory*. Application source such as cl-magick.lisp
+uses *cello-config-directory* to load cl-magick-config.lisp once the cl-magick
+package has been defined. A simpler approach was tried but seemed icky. We
+will see.
+
+This release is a phat one to set the environment, but future releases will be 
+of just the Cello directory. I /think/ I built in enough flexibility so that you can
+tweak once for a different directory structure and then not worry about redoing
+that every time there is a new release.
+
+This release contains asdf.lisp as well as UFFI. You may already have those. If
+so, they are fine, the ones here are vanilla.
+
+------------ ALERT ------------------------------------------------------------
+This distro contains the Cells source. Use this version, not anything you might
+have from the Cells project. Not sure yet, but I am leaning towards merging the
+two projects. If I do, it will still be possible to grab just Cells.
+-------------------------------------------------------------------------------
+
+------------ THANKS -----------------------------------------------------------
+...to David Steuber for mandelbrot3.gif, which looks smashing when used as a
+texture for just about anything.
+-------------------------------------------------------------------------------
+
+------------ LINUX ------------------------------------------------------------
+I think I pulled in Frank's code for the Linux port, but I just featured it out
+and went with the configuration.lisp-based stuff for ACL/win32. I have suggested
+Frank's fine job of loading cooperating .SOs be contributed to UFFI so Cello code
+can just say "load-library". Stay tuned.
+-------------------------------------------------------------------------------
+
+------------ WARNING ----------------------------------------------------------
+ASDF files are suspect for anything other than a full build. In some places I
+cured this by bogusly declaring each file dependent on its predecessor. In other
+places you may find that modifying files at random, then exiting and coming back
+in will cause compiler errors when ASDF tries recompiling just the changed files.
+Unfortunately, at this point I do not use ASDF for day to day work, so they do
+not get much attention, and when porting to Lispworks/win32 (where I do use ASDF) 
+I just set d-force to t to force full builds if I have any such problems.
+--------------------------------------------------------------------------------
+
+----------- BIG PROBLEM --------------------------------------------------------
+Libraries. For win32, the PC4 release includes the DLLs I use (well, except those you should find in /windows/system32). Linux/Mac OS X really have their work cut out for them. Building Freeglut and ImageMagick (and FreeType) may just work for you as typical Linux installs, but FTGL as I have done it requires to build with the included FTGLFromC.cpp and a modified FTGLExtrdFont.h built into the library .SO. 
+-------------------------------------------------------------------------------
+
+
+Step #1
+-------
+Unzip into any directory. The distro includes win32 DLLs, 
+so Linux folk can skip those.
+
+Step #2
+-------
+Edit configure.lisp, tweak as necessary
+
+Step #3
+-------
+Open build.lisp.
+
+Get ASDF (if necessary) and build-sys-kt.lisp loaded.
+
+Work your way down the top-level forms evaluating them in turn. Comment out the line about 
+UFFI if you already have that.
+
+lesson-14 is optional, but will let you know if you have the Glut and 
+OpenGL working, including callbacks from C into Lisp.
+
+Step #4
+-------
+Cello-test. Hope it works. If so, the FTGL test takes a long time to come up, 
+maybe six seconds on my 3ghz screamer, because it is loading every TTF font on
+my system (150?) and building a widget for it.
+
+The light panel is the fun one. The cone is the best place to see photographic textures,
+and the torus is a good one, too. Play with the lighting controls to see what they do.
+And as you change from shape to shape, play with the options for each, such as 
+"slices" and "stacks". The torus is a lot of fun for that. To understand what
+is going on, set "wireframe" on.
+
+The prettiest pictures come from "sphere","repeat", and one of the photographic textures.
+The torus and "Cello" shapes are good here.
+
+If you see one you like, hit the "snapshot" button on the "just shoot me" widget. 
+It will write out a PNG in the "out" directory. I have no
+idea where I left things on the "record" button. It will probably crash.
+
+If sound is working, you will hear a short riff when the window opens, a little bleep when you operate any of the color controls, and with luck a cool sound if you hit ESCAPE to close a window (worked under AllegroCL, not Lispworks).
+
+Crashing
+--------
+Lisp is hard to kill, and so can be the Glut. It seems to have gotten better under AllegroCL. The old nightmare is described next. Now I can click debug and/or abort, tho the Cello window will not go away until it I move the mouse over it. On Lispworks it does not go away. I can run again and get a second window, but the third or fourth time Lispworks gets upset. I spent exactly zero seconds trying to figure out how to fix this, so hopefully anyone wanting to use Lispworks in anger will be able to figure something out.
+
+Old nightmare: "Under AllegroCL on win32, when I get a 
+backtrace I can not always just click debug or abort. I have learned to click first on
+any IDE window, and /then/ debug or abort. In the worst cases I have to get to the 
+listener and evaluate (c-stop t), then try again to abort, and sometimes it takes a few
+aborts. In the very worst case I have to kill AllegroCL, but fortunately this does not
+happen very often. On Lispworks I had worse luck keeping LW going in the face of 
+backtraces, but I imagine that with a little elbow grease (and LW expertise, which
+I lack utterly) the problem could be resolved."
+
+ Needless to say, I do view anything interfering with iterative Lisp developemtn as a show-stopper, so if anyone gets serious about Cello under a different implementation I'll help with what I know to get crashing under control.
+
+kenny
+4/17/2004

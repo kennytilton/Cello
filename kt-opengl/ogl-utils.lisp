@@ -1,0 +1,334 @@
+;; -*- mode: Lisp; Syntax: Common-Lisp; Package: kt-opengl; -*-
+;;________________________________________________________
+;;
+;;;
+;;; Copyright (c) 2004 by Kenneth William Tilton.
+;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+;;; $Id: ogl-utils.lisp,v 1.10 2007/02/02 20:11:19 ktilton Exp $
+
+(declaim (optimize (debug 1) (speed 3) (safety 1) (compilation-speed 0)))
+
+(in-package :kt-opengl)
+
+;;; ===========================================================================
+;;; SPECIAL / GLOBAL VARS
+;;; ===========================================================================
+
+(defparameter *textures-1* (fgn-alloc 'gluint 1 :ignore))
+(defparameter *new-listing* nil)
+
+(defparameter *dbg-viewport-r* (fgn-alloc 'glint 4 :ignore))
+
+;;; ===========================================================================
+;;; DATA STRUCTURES / DATA DEFINITIONS
+;;; ===========================================================================
+
+(defstruct v3i
+  (x 0 :type GLint)
+  (y 0 :type GLint)
+  (z 0 :type GLint))
+
+(defstruct v3f
+  (x 0.0s0 :type GLfloat)
+  (y 0.0s0 :type GLfloat)
+  (z 0.0s0 :type GLfloat))
+
+(defstruct v3d
+  (x 0.0d0 :type GLdouble)
+  (y 0.0d0 :type GLdouble)
+  (z 0.0d0 :type GLdouble))
+
+;;; ===========================================================================
+;;; FUNCTIONS
+;;; ===========================================================================
+
+;;; ---------------------------------------------------------------------------
+;;; CONSTRUCTORS
+;;; ---------------------------------------------------------------------------
+
+(defun mk-vertex3i (x y z)
+  (make-v3i :x x :y y :z z))
+
+(defun mk-vertex3f (x y z)
+  (make-v3f :x x :y y :z z))
+
+(defun mk-vertex3d (x y z)
+  (make-v3d :x x :y y :z z))
+
+(defmacro mkv3i (v3i-lists)
+  `(mapcar #'(lambda (vtx)
+	      (mk-vertex3i (first vtx)
+			   (second vtx)
+			   (third vtx)))
+	  ',v3i-lists))
+
+(defmacro mkv3f (v3f-lists)
+  `(mapcar #'(lambda (vtx)
+	      (mk-vertex3f (first vtx)
+			   (second vtx)
+			   (third vtx)))
+	  ',v3f-lists))
+
+(defmacro mkv3d (v3d-lists)
+  `(mapcar #'(lambda (vtx)
+	      (mk-vertex3d (first vtx)
+			   (second vtx)
+			   (third vtx)))
+	  ',v3d-lists))
+
+;;; ---------------------------------------------------------------------------
+;;; TEXTURE SUPPORT
+;;; ---------------------------------------------------------------------------
+
+(defun ogl-tex-activate (tex-name)
+  (assert tex-name)
+  ;;(print `(ogl-tex-activate doing ,tex-name))
+  (gl-enable gl_texture_2d)
+  (gl-bind-texture gl_texture_2d tex-name)
+  (gl-polygon-mode gl_front_and_back gl_fill)) ;; just front ?
+
+(defun ogl-texture-delete (texture-name)
+  ;;(print `(deleting-tx ,texture-name))
+  (setf (ff-elt *textures-1* gluint 0) texture-name)
+  (glfree :texture texture-name)
+  (gl-delete-textures 1 *textures-1*))
+
+(defun ogl-texture-gen ()
+  (gl-gen-textures 1 *textures-1*)
+  (glec :ogl-texture-gen)
+  (ff-elt *textures-1* gluint 0))
+
+(let ((gl-s-plane nil)
+      (gl-t-plane nil)
+      (gl-r-plane nil)
+      (gl-q-plane nil))
+
+  (defun ogl-tex-gen-setup (mode tex-env tex-wrap scale &rest planes)
+
+    ;;(trc "ogl-tex-gen-setup:" mode tex-env tex-wrap scale planes)
+
+    (gl-tex-envf gl_texture_env gl_texture_env_mode tex-env)
+    (gl-tex-parameterf gl_texture_2d gl_texture_min_filter gl_linear )
+    (gl-tex-parameterf gl_texture_2d gl_texture_mag_filter gl_linear )
+  
+    (gl-tex-parameteri gl_texture_2d gl_texture_wrap_s tex-wrap) ; gl_repeat for tiling
+    (gl-tex-parameteri gl_texture_2d gl_texture_wrap_t tex-wrap) ;--
+    
+    (loop for plane in planes
+       do (ecase plane
+	    (:s  (gl-tex-geni gl_s gl_texture_gen_mode mode)
+		 (gl-tex-genfv gl_s gl_object_plane
+			       (ff-floatv-ensure gl-s-plane scale 0 0 0))
+		 (gl-enable gl_texture_gen_s))
+	    (:tee  (gl-tex-geni gl_t gl_texture_gen_mode mode)
+		   (gl-tex-genfv gl_t gl_object_plane
+				 (ff-floatv-ensure gl-t-plane 0 scale 0 0))
+		   (gl-enable gl_texture_gen_t))
+	    (:r  (gl-tex-geni gl_r gl_texture_gen_mode mode)
+		 (gl-tex-genfv gl_r gl_object_plane
+			       (ff-floatv-ensure gl-r-plane 0 0 scale 0))
+		 (gl-enable gl_texture_gen_r))
+	    (:q  (gl-tex-geni gl_q gl_texture_gen_mode mode)
+		 (gl-tex-genfv gl_q gl_object_plane
+			       (ff-floatv-ensure gl-q-plane 0 0 scale 0))
+		 (gl-enable gl_texture_gen_q))))))
+
+(defun ogl-scissor-box ()
+  (let ((box (fgn-alloc 'glint 4 :scissor)))
+    (gl-get-integerv gl_scissor_box box)
+    box))
+
+(defun ogl-current-color ()
+  (let ((rgba (fgn-alloc 'glint 4 :ogl-current-color)))
+    (gl-get-integerv gl_current_color rgba)
+    rgba))
+
+(defun ogl-bounds (ff-box)
+  (loop for n below 4 
+      collecting (eltgli ff-box n)))
+
+(defun farther (&rest values)
+  (apply '- values))
+
+(defun xlin (&rest values) ;; yep. moves matrix, not object
+  (apply '+ values))
+
+(defun nearer (&rest values)
+  (apply '+ values))
+
+(defun xlout (&rest values) ;; yep. moves matrix, not object
+  (apply '- values))
+
+(defun ncalc-normalf(v0x v0y v0z v1x v1y v1z v2x v2y v2z
+                      &aux d0x d0y d0z d1x d1y d1z)
+;;;  (declare (type GLfloat
+;;;		 v0x v0y v0z v1x v1y v1z v2x v2y v2z
+;;;                 d0x d0y d0z d1x d1y d1z))
+  
+  (setf d0x (- v1x v0x)
+        d0y (- v1y v0y)
+        d0z (- v1z v0z))
+
+  (setf d1x (- v2x v1x)
+        d1y (- v2y v1y)
+        d1z (- v2z v1z))
+
+  (xgl-normalize-v3f  
+   (- (* d0y d1z) (* d0z d1y))
+   (- (* d0z d1x) (* d0x d1z))
+   (- (* d0x d1y) (* d0y d1x))))
+
+(defun xgl-normalize-v3f (x y z)
+;;;  (declare (type GLfloat x y z))
+  
+  (let ((m2 (+ (* x x) (* y y) (* z z))))
+    (if (zerop m2)
+        (values x y z)
+      (let ((m (sqrt m2)))
+        ;(trc "normalizing div" m)
+        ;;(cells::count-it :normalize-3f)
+        (values (+ (/ x m)) (+ (/ y m)) (+ (/ z m)))))))
+
+(defparameter *ogl-boolean*
+  (fgn-alloc 'glboolean 1 :ignore))
+
+(defun ogl-get-boolean (gl-code)
+  (gl-get-booleanv gl-code *ogl-boolean*)
+  (not (zerop (cffi-uffi-compat:deref-array *ogl-boolean* '(:array glboolean) 0))))
+
+(defparameter *ogl-int*
+  (fgn-alloc 'glint 1 :ignore))
+
+(defparameter *ogl-float-1*
+  (fgn-alloc 'glfloat 1 :ignore))
+
+(defun wrap-float (lisp-float-value)
+  (setf (cffi-uffi-compat:deref-array *ogl-float-1* '(:array glfloat) 0) (* 1.0f0 lisp-float-value))
+  *ogl-float-1*)
+
+(defun eltgli (v n)
+  (ff-elt v glint n))
+
+(defun ogl-get-int (gl-code)
+  (gl-get-integerv gl-code *ogl-int*)
+  (eltgli *ogl-int* 0))
+
+(defun dump-viewport (key)
+  (gl-get-integerv gl_viewport *dbg-viewport-r*)
+  (format t "~&dump-viewport> ~a: ~a" key
+    (loop for n from 0 to 3
+        collecting (eltgli *dbg-viewport-r* n))))  
+
+(defparameter *gl-ints-4*
+  (fgn-alloc 'glint 4 :ignore))
+
+(defun gl-get-ints-4 (gl-param)
+  (gl-get-integerv gl-param *gl-ints-4*)
+  (loop for n below 4
+      collecting (eltgli *gl-ints-4* n)))
+
+(defun ogl-raster-pos-get ()
+  (gl-get-ints-4 gl_current_raster_position))
+
+(defun get-stack-depth (mm)
+  (gl-get-integerv
+   (ecase (matrix-mode-symbol mm)
+     (gl_modelview gl_modelview_stack_depth)
+     (gl_projection gl_projection_stack_depth)
+     (gl_texture gl_texture_stack_depth))
+   *stack-depth*)
+  (aforef *stack-depth* 0))
+
+(defun get-matrix-mode ()
+  (gl-get-integerv gl_matrix_mode *ogl-int*)
+  (eltgli *ogl-int* 0))
+
+(defmacro with-bitmap-shifted ((x y) &body body)
+  (let ((xy (gensym)))
+  `(let ((,xy (cons ,x ,y)))
+     (ogl-pen-move (car ,xy) (cdr ,xy))
+     (prog1
+         (progn ,@body)
+       (ogl-pen-move (- (car ,xy)) (- (cdr ,xy)))))))
+
+(defun ogl-pen-move (x y)
+  ;;(trc "ogl-pen-moving" x y)
+  (gl-bitmap 0 0 0 0 x y (cffi-uffi-compat:make-null-pointer :void)))
+
+(defclass ogl-texture ()
+  ((texture-name :accessor texture-name :initform nil)
+   (texture-precedence :accessor texture-precedence :initform 0)))
+
+(defparameter *ogl-display-lists* nil)
+
+(defmethod ogl-lists-delete (node)
+  (dsp-lists-delete (ogl-list-cache node)))
+
+(defmethod ogl-list-cache (other)
+  (declare (ignore other))
+  *ogl-display-lists*)
+
+(defmethod (setf ogl-list-cache) (new-value other)
+  (declare (ignore other))
+  (setf *ogl-display-lists* new-value))
+
+(defun dsp-lists-delete (list-cache)
+  (dolist (k-dl list-cache)
+    (gl-delete-lists (cdr k-dl) 1)))
+
+(defun dsp-list-store (list node keys)
+  (push (cons keys list) (ogl-list-cache node)))
+
+(defun dsp-list-lookup (keys list)
+  (cdr (assoc keys list :test 'equal)))
+
+(defun dsp-list-dump (node)
+  (format t "display-lists for ~a" node)
+  (loop for (key . list) in (ogl-list-cache node)
+        do (format t "~d : ~a" list key)))
+
+(defun flatten (&rest args)
+  (mapcan (lambda (arg)
+            (if (consp arg)
+                (mapcan 'flatten arg)
+              (list arg))) args))
+
+(defun gl-boolean-test (value)
+  #+allegro (not (eql value #\null))
+  #-allegro (not (zerop value)))
+
+(defun dump-lists (min max)
+  (loop with start
+        and end
+        for lx from min to max
+        when (let ((is (gl-is-list lx)))
+               (when (gl-boolean-test is) 
+                 (print (list "dl test" lx is (char-code is))))
+               (gl-boolean-test is))
+        do (if start
+               (if end
+                   (if (eql lx (1+ end))
+                       (setf end lx)
+                     (print `(gl ,start to ,end)))
+                 (if (eql lx (1+ start))
+                     (setf end lx)
+                   (print `(gl ,start))))
+             (setf start lx))))

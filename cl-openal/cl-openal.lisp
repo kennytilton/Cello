@@ -1,0 +1,74 @@
+;; -*- mode: Lisp; Syntax: Common-Lisp; Package: cl-openal; -*-
+;;________________________________________________________
+;;
+;;;
+;;; Copyright (c) 2004 by Kenneth William Tilton.
+;;;
+;;; Permission is hereby granted, free of charge, to any person obtaining a copy 
+;;; of this software and associated documentation files (the "Software"), to deal 
+;;; in the Software without restriction, including without limitation the rights 
+;;; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+;;; copies of the Software, and to permit persons to whom the Software is furnished 
+;;; to do so, subject to the following conditions:
+;;;
+;;; The above copyright notice and this permission notice shall be included in 
+;;; all copies or substantial portions of the Software.
+;;;
+;;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+;;; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+;;; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+;;; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+;;; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+;;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS 
+;;; IN THE SOFTWARE.
+
+;;; $Id: cl-openal.lisp,v 1.7 2008/04/11 09:23:06 ktilton Exp $
+
+(pushnew :cl-openal *features*)
+
+(defpackage #:cl-openal
+  (:nicknames #:oal)
+  (:use #:common-lisp #:cffi #:cffi-extender #:utils-kt)
+  (:export
+   #:xoa
+   #:al-chk
+   #:al-source-playing-p
+   #:cl-openal-init 
+   #:cl-openal-shutdown
+   #:wav-to-buffer
+   #:source-wav-play-start
+   #:wav-play-till-end
+   #:al-source-free
+   #:al-source-gen))
+
+(in-package :cl-openal)
+
+(define-foreign-library OpenAL
+      (:darwin (:framework "OpenAL"))
+  (:windows (:or "openal32.dll")))
+
+;; OpenAL 1.0: No separate ALUT for OS X
+(define-foreign-library ALut
+    (:windows (:or "alut.dll")))
+
+(defparameter *audio-files*
+      (make-pathname
+       :directory '(:absolute "0dev" "user" "sounds")
+       :type "wav"))
+
+#+doit
+(xoa)
+
+#+allegro
+(defun xoa ()
+  (dolist (dll (ff:list-all-foreign-libraries))
+    (when (search "openal" (pathname-name dll))
+      (print `(unloading foreign library ,dll))
+      (ff:unload-foreign-library dll)))
+  (dolist (dll (ff:list-all-foreign-libraries))
+    (when (search "alut" (pathname-name dll))
+      (print `(unloading foreign library ,dll))
+      (ff:unload-foreign-library dll))))
+
+#-allegro
+(defun xoa ())
